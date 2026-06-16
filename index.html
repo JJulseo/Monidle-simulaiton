@@ -29,7 +29,6 @@
   .t-sensor{top:9px}.t-isf{top:46%}.t-vessel{bottom:8px}
   .elabel{position:absolute;font-family:"JetBrains Mono",monospace;font-size:10.5px;font-weight:600;transform:translateX(-50%);text-shadow:0 1px 8px rgba(0,0,0,.95)}
   .e-gfap{left:33%;top:5px;color:var(--gfap)}.e-uch{left:65%;top:5px;color:var(--uch)}
-  .apt .tgt{opacity:0}
   .controls{width:100%;display:flex;flex-direction:column;gap:9px}
   .crow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:9px 13px;border-radius:12px;
     background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
@@ -97,6 +96,7 @@
       <button id="play">⏸ 일시정지</button><button id="reset">↺ 리셋</button>
       <button id="tUch">UCH-L1</button><button id="tGfap">GFAP</button>
       <button id="tHole">구멍</button><button id="dbg">디버그</button>
+      <button id="tColor">색상: 브랜드</button>
     </div>
 
     <details class="panel" open>
@@ -105,7 +105,7 @@
         <div class="par"><label>혈류 속도</label><input id="p_flow" type="range" min="0" max="150" value="50"><output id="o_flow"></output></div>
         <div class="par"><label>누출 강도</label><input id="p_leak" type="range" min="5" max="100" value="30"><output id="o_leak"></output></div>
         <div class="par"><label>확산 D</label><input id="p_D" type="range" min="3" max="124" value="120"><output id="o_D"></output></div>
-        <div class="par"><label>확산 반복</label><input id="p_iter" type="range" min="6" max="60" value="38"><output id="o_iter"></output></div>
+        <div class="par"><label>확산 반복</label><input id="p_iter" type="range" min="6" max="150" value="90"><output id="o_iter"></output></div>
         <div class="par"><label>clearance</label><input id="p_clr" type="range" min="900" max="1000" value="999"><output id="o_clr"></output></div>
         <div class="par"><label>curl 세기</label><input id="p_curl" type="range" min="0" max="60" value="25"><output id="o_curl"></output></div>
         <div class="par"><label>curl 진화</label><input id="p_curlT" type="range" min="0" max="60" value="12"><output id="o_curlT"></output></div>
@@ -240,11 +240,23 @@
   precision highp float; out vec4 o;
   void main(){ float a=smoothstep(0.5,0.0,length(gl_PointCoord-0.5)); o=vec4(vec3(1.0,0.74,0.66)*a,a); }`;
 
+  // point-sample the field at an arbitrary uv (aptamer root position), byte-encoded so
+  // a single readPixels() per frame can pull every aptamer's local concentration at once.
+  // Encoded against a much smaller range than the field's full 0-1.4 ceiling: real
+  // concentration at the aptamer's depth (well above the vessel wall) realistically only
+  // reaches a small fraction of that, so a wide encode range would waste the byte's
+  // resolution right where the fold threshold needs to discriminate.
+  const SAMPLE_RANGE=0.10;
+  const SAMPLEFRAG=`#version 300 es
+  precision highp float; precision highp sampler2D;
+  in vec2 vUv; out vec4 o; uniform sampler2D uField; uniform vec2 uUV; uniform float uRange;
+  void main(){ vec2 c=texture(uField,uUV).rg; o=vec4(clamp(c,0.0,uRange)/uRange,0.0,1.0); }`;
+
   function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);
     if(!gl.getShaderParameter(x,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(x)+'\n'+s);return x;}
   function prog(v,f){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,v));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
     if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p;}
-  const advP=prog(VERT,ADVECT),diffP=prog(VERT,DIFFUSE),copyP=prog(VERT,COPY),blurP=prog(VERT,BLUR),dispP=prog(VERT,DISP),partP=prog(PVERT,PFRAG);
+  const advP=prog(VERT,ADVECT),diffP=prog(VERT,DIFFUSE),copyP=prog(VERT,COPY),blurP=prog(VERT,BLUR),dispP=prog(VERT,DISP),partP=prog(PVERT,PFRAG),sampleP=prog(VERT,SAMPLEFRAG);
 
   const quad=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,quad);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
@@ -260,6 +272,18 @@
   let A=target(GW,GH),B=target(GW,GH),bA=target(BW,BH),bB=target(BW,BH);
   function clearF(t){gl.bindFramebuffer(gl.FRAMEBUFFER,t.fbo);gl.viewport(0,0,t.w,t.h);gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT);}
   clearF(A);clearF(B);
+
+  // RGBA8/UNSIGNED_BYTE 1-px-per-aptamer FBO: lets every aptamer read its own local
+  // concentration with one batched readPixels() instead of a global lag model
+  const SAMPLE_N=12;
+  const sampleTarget=(function(){const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,SAMPLE_N,1,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    const fbo=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);return {tex,fbo};})();
+  const U_sample={f:L(sampleP,'uField'),uv:L(sampleP,'uUV'),range:L(sampleP,'uRange')};
+  const sampleBuf=new Uint8Array(SAMPLE_N*4);
 
   function L(p,n){return gl.getUniformLocation(p,n);}
   const U={
@@ -280,11 +304,32 @@
   function cpuVel(x,y,t,vs){if(y>0.02&&y<0.15){const b=(y-0.085)/0.06;const prof=Math.max(0,1-b*b);const pulse=0.82+0.18*Math.sin(t*2.1-x*18.85);return vs*prof*pulse;}return 0;}
 
   function hsl(h,s,l){h/=360;function f(n){const k=(n+h*12)%12;const a=s*Math.min(l,1-l);return l-a*Math.max(-1,Math.min(k-3,Math.min(9-k,1)));}return [f(0),f(8),f(4)];}
-  const colBoth=hsl(300,0.9,0.62); // co-detection hue: both biomarkers elevated at once
+  function hexRgb(hex){const n=parseInt(hex.slice(1),16);return [((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255];}
+  // 3 selectable, live-switchable color modes: each defines its own coherent channel
+  // colors AND a matched overlap color, so "both elevated" never defaults to white/pink.
+  let colorMode=0;
+  const colorModeNames=['색상: 브랜드','색상: 비리디스/플라즈마','색상: CFD(coolwarm)'];
+  function getPalette(mode){
+    if(mode===1) return { // viridis/plasma-inspired fixed hues, ignores hue sliders
+      colG:hexRgb('#21918c'), colU:hexRgb('#b12a90'),
+      colGHot:hexRgb('#5ec962'), colUHot:hexRgb('#fca636'),
+      colBoth:hsl(35,0.7,0.45)
+    };
+    if(mode===2) return { // CFD/wind-tunnel coolwarm: blue family vs red/orange family
+      colG:[0.07,0.20,0.55], colU:[0.45,0.05,0.05],
+      colGHot:[0.55,0.80,0.98], colUHot:[1.00,0.62,0.28],
+      colBoth:[0.82,0.83,0.86]
+    };
+    return { // brand: slider-driven hues, but hot/overlap kept off pure white
+      colG:hsl(P.hueG,0.85,0.6), colU:hsl(P.hueU,0.9,0.58),
+      colGHot:hsl(P.hueG,0.55,0.78), colUHot:hsl(P.hueU,0.55,0.76),
+      colBoth:hsl(45,0.55,0.65)
+    };
+  }
 
   // params
-  const P={flow:.5,leak:.30,D:.12,iter:38,clr:.999,curl:0,curlT:.12,hueG:190,hueU:35,bloom:.5,warp:.16,tone:1.35};
-  let running=true,onset=1.0,simTime=0,showG=1,showU=1,curlOn=0,holes=0,debug=0,dpr=Math.min(window.devicePixelRatio||1,2),isfU=0,isfG=0;
+  const P={flow:.5,leak:.30,D:.12,iter:90,clr:.999,curl:0,curlT:.12,hueG:190,hueU:35,bloom:.5,warp:.16,tone:1.35};
+  let running=true,onset=1.0,simTime=0,showG=1,showU=1,curlOn=0,holes=0,debug=0,dpr=Math.min(window.devicePixelRatio||1,2);
 
   function resize(){dpr=Math.min(window.devicePixelRatio||1,2);const r=canvas.getBoundingClientRect();
     canvas.width=Math.max(2,Math.round(r.width*dpr));canvas.height=Math.max(2,Math.round(r.height*dpr));}
@@ -308,13 +353,14 @@
 
   const playBtn=document.getElementById('play'),phaseEl=document.getElementById('phase'),onsetEl=document.getElementById('onsetR');
   playBtn.addEventListener('click',()=>{running=!running;playBtn.textContent=running?'⏸ 일시정지':'▶ 재생';});
-  document.getElementById('reset').addEventListener('click',()=>{clearF(A);clearF(B);simTime=0;isfU=0;isfG=0;for(let i=0;i<NP;i++)spawn(i);});
+  document.getElementById('reset').addEventListener('click',()=>{clearF(A);clearF(B);simTime=0;for(let i=0;i<NP;i++)spawn(i);});
   onsetEl.addEventListener('input',e=>onset=e.target.value/100);
-  const tG=document.getElementById('tGfap'),tU=document.getElementById('tUch'),tH=document.getElementById('tHole'),dB=document.getElementById('dbg');
+  const tG=document.getElementById('tGfap'),tU=document.getElementById('tUch'),tH=document.getElementById('tHole'),dB=document.getElementById('dbg'),tColor=document.getElementById('tColor');
   tG.addEventListener('click',()=>{showG=showG?0:1;tG.classList.toggle('off',!showG);});
   tU.addEventListener('click',()=>{showU=showU?0:1;tU.classList.toggle('off',!showU);});
   tH.addEventListener('click',()=>{holes=holes?0:1;tH.classList.toggle('off',!holes);document.getElementById('wallLine').setAttribute('stroke-dasharray',holes?'9 5':'3 1.5');});
   dB.addEventListener('click',()=>{debug=(debug+1)%3;dB.textContent=['디버그','GFAP raw','UCH raw'][debug];dB.classList.toggle('off',debug!==0);});
+  tColor.addEventListener('click',()=>{colorMode=(colorMode+1)%3;tColor.textContent=colorModeNames[colorMode];});
   tH.classList.add('off');
 
   // Aptamer = short jointed chain, root anchored at the electrode, tip free.
@@ -331,8 +377,11 @@
     d+=` L${last[0].toFixed(2)} ${last[1].toFixed(2)}`;
     return d;
   }
-  function updateApt(a,fdt,isf){
-    const target=isf>0.30?1:0;
+  function updateApt(a,fdt,conc){
+    // Threshold sits inside the real concentration's natural fluctuation band at this
+    // depth, so aptamers flicker fold/unfold as local concentration drifts above/below it —
+    // closer matches the real reversible structure-switching equilibrium than a one-shot trigger.
+    const target=conc>0.004?1:0;
     const rate=target>a.curl?6.0:2.2;
     a.curl+=(target-a.curl)*Math.min(1,rate*fdt);
     let ang=a.baseDir,x=a.ax,y=a.ay;
@@ -348,48 +397,57 @@
       pts.push([x,y]);
     }
     a.pathEl.setAttribute('d',smoothPath(pts));
-    const tip=pts[pts.length-1];
-    a.loopEl.setAttribute('cx',tip[0].toFixed(2));a.loopEl.setAttribute('cy',tip[1].toFixed(2));
-    a.loopEl.setAttribute('r',(1.15*(1-0.3*a.curl)).toFixed(2));
-    a.tgtEl.setAttribute('cx',tip[0].toFixed(2));a.tgtEl.setAttribute('cy',tip[1].toFixed(2));
-    a.tgtEl.style.opacity=Math.max(0,Math.min(1,(a.curl-0.5)*2)).toFixed(2);
+    // pure-line aptamer: the only "now bound" cue is a subtle thickening/brightening, no end markers
+    a.pathEl.setAttribute('stroke-width',(0.5+0.35*a.curl).toFixed(2));
+    a.pathEl.setAttribute('opacity',(0.78+0.22*a.curl).toFixed(2));
   }
-  let uchApts=[],gfapApts=[];
+  let allApts=[];
   (function build(){
     const NX=[{x:29,s:-1,m:'g',c:'#43dcec'},{x:37,s:-1,m:'g',c:'#43dcec'},{x:61,s:1,m:'u',c:'#f6b13e'},{x:69,s:1,m:'u',c:'#f6b13e'}];
     let nd='',ap='',metas=[];
     NX.forEach(n=>{
       nd+=`<path d="M${n.x-1.5} 3 L${n.x+1.5} 3 L${n.x+0.25} 72 L${n.x-0.25} 72 Z" fill="url(#gold)"/>`;
       nd+=`<line x1="${n.x-0.4}" y1="4" x2="${n.x-0.1}" y2="70" stroke="#fff3cf" stroke-opacity=".4" stroke-width=".3"/>`;
-      [22,38,55].forEach((y)=>{const ax=n.x+n.s*1.3,tc=(n.m==='g'?'#7be7f2':'#ffd27a');
-        ap+=`<g class="apt" data-m="${n.m}">
-          <path fill="none" stroke="${n.c}" stroke-width=".5" stroke-linecap="round" opacity=".9"/>
-          <circle class="loop" r="1.15" fill="none" stroke="${n.c}" stroke-width=".5" opacity=".9"/>
-          <circle class="tgt" r=".95" fill="${tc}"/></g>`;
+      [60,66,71].forEach((y)=>{const ax=n.x+n.s*1.3;
+        ap+=`<g class="apt" data-m="${n.m}"><path fill="none" stroke="${n.c}" stroke-width=".5" stroke-linecap="round" opacity=".78"/></g>`;
         metas.push({ax,ay:y,s:n.s,m:n.m});});
     });
     document.getElementById('needles').innerHTML=nd;document.getElementById('aptamers').innerHTML=ap;
     document.querySelectorAll('#aptamers > .apt').forEach((g,i)=>{
       const meta=metas[i];
-      const a={ax:meta.ax,ay:meta.ay,s:meta.s,baseDir:Math.atan2(-2.2,meta.s*3.4),
+      const a={ax:meta.ax,ay:meta.ay,s:meta.s,m:meta.m,baseDir:Math.atan2(-2.2,meta.s*3.4),
         phase:Math.random()*Math.PI*2,freq:0.30+Math.random()*0.22,curl:0,
-        pathEl:g.querySelector('path'),loopEl:g.querySelector('.loop'),tgtEl:g.querySelector('.tgt')};
+        uvx:meta.ax/100,uvy:1-meta.ay/125,
+        pathEl:g.querySelector('path')};
       updateApt(a,0,0);
-      (meta.m==='u'?uchApts:gfapApts).push(a);
+      allApts.push(a);
     });
     let rb='';for(let k=0;k<7;k++){const x=8+k*13,y=114+(k%2)*5;rb+=`<ellipse cx="${x}" cy="${y}" rx="3" ry="2" transform="rotate(${k*25} ${x} ${y})"/>`;}
     document.getElementById('rbc').innerHTML=rb;
   })();
-  function phaseText(bu,bg){ if(bu<0.02&&bg<0.02)return '정상 (Baseline)'; if(bg<0.04)return 'UCH-L1 상승 — 뉴런 손상';
-    if(bg<0.55)return 'GFAP 상승 — 별아교세포 반응'; return '급성기 — 두 마커 포획'; }
+  function phaseText(bu,bg){
+    if(bu<0.05&&bg<0.05) return '정상 (Baseline)';
+    if(bu>bg*1.3) return 'UCH-L1 상승 — 뉴런 손상';
+    if(bg>bu*1.3) return 'GFAP 상승 — 별아교세포 반응';
+    return '급성기 — 두 마커 동반 상승';
+  }
+
+  // Real GFAP/UCH-L1 release kinetics overlap rather than alternate: UCH-L1 spikes
+  // early and fades fast, GFAP rises slower and stays elevated. onset (0..1) is mapped
+  // across a compressed 72h window so the full overlapping shape plays out on the slider.
+  function biomarkerPulse(t,tPeak,riseTau,decayHalfLife){
+    const rise=1-Math.exp(-t/riseTau);
+    const decay=Math.pow(0.5,Math.max(0,t-tPeak)/decayHalfLife);
+    return rise*decay;
+  }
 
   resize();let last=performance.now();
   function frame(now){
     const fdt=Math.min((now-last)/1000,0.05);last=now;
-    const bU=Math.max(0,Math.min(1,(onset-0.06)/0.34))*0.98;
-    const bG=Math.max(0,Math.min(1,(onset-0.48)/0.40))*0.92;
-    const colG=hsl(P.hueG,0.85,0.6), colU=hsl(P.hueU,0.9,0.58);
-    const colGHot=hsl(P.hueG,1.0,0.66), colUHot=hsl(P.hueU,1.0,0.64);
+    const tHr=onset*72;
+    const bU=biomarkerPulse(tHr,8,3,9)*0.98;
+    const bG=biomarkerPulse(tHr,24,10,48)*0.92;
+    const pal=getPalette(colorMode);
     if(running){
       simTime+=fdt*(reduce?0.5:1.2);
       const curlAmt=P.curl;
@@ -397,9 +455,19 @@
         gl.uniform1f(U.ad.curl,curlAmt);gl.uniform1f(U.ad.curlT,P.curlT);gl.uniform1f(U.ad.leak,P.leak);gl.uniform1f(U.ad.clr,P.clr);gl.uniform2f(U.ad.bl,bG,bU);});
       const it=P.iter; for(let k=0;k<it;k++) simPass(diffP,U.df.f,()=>{gl.uniform2f(U.df.tx,1/GW,1/GH);gl.uniform2f(U.df.bl,bG,bU);gl.uniform1f(U.df.D,P.D);gl.uniform1f(U.df.leak,P.leak);gl.uniform1f(U.df.hole,holes);});
       for(let i=0;i<NP;i++){let x=pPos[i*2],y=pPos[i*2+1];x+=cpuVel(x,y,simTime,P.flow)*0.05;if(x>1.0){x-=1.0;}pPos[i*2]=x;pPos[i*2+1]=y;}
-      isfU+=(bU-isfU)*Math.min(1,0.45*fdt); isfG+=(bG-isfG)*Math.min(1,0.27*fdt);
-      uchApts.forEach(a=>updateApt(a,fdt,isfU));
-      gfapApts.forEach(a=>updateApt(a,fdt,isfG));
+      // sample each aptamer's true local concentration off the field (one batched
+      // readback) so folding naturally staggers by depth/proximity instead of a global toggle
+      gl.useProgram(sampleP);bindQuad(sampleP);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,sampleTarget.fbo);
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,A.tex);gl.uniform1i(U_sample.f,0);
+      gl.uniform1f(U_sample.range,SAMPLE_RANGE);
+      gl.disable(gl.BLEND);
+      allApts.forEach((a,i)=>{gl.viewport(i,0,1,1);gl.uniform2f(U_sample.uv,a.uvx,a.uvy);gl.drawArrays(gl.TRIANGLES,0,6);});
+      gl.readPixels(0,0,SAMPLE_N,1,gl.RGBA,gl.UNSIGNED_BYTE,sampleBuf);
+      allApts.forEach((a,i)=>{
+        const conc=(a.m==='g'?sampleBuf[i*4]:sampleBuf[i*4+1])/255*SAMPLE_RANGE;
+        updateApt(a,fdt,conc);
+      });
       phaseEl.textContent=phaseText(bU,bG);
     }
     gl.useProgram(copyP);bindQuad(copyP);gl.bindFramebuffer(gl.FRAMEBUFFER,bA.fbo);gl.viewport(0,0,BW,BH);
@@ -413,9 +481,9 @@
     gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,bA.tex);gl.uniform1i(U.dp.b,1);
     gl.uniform1f(U.dp.t,simTime);gl.uniform1f(U.dp.dbg,debug);gl.uniform2f(U.dp.show,showG,showU);
     gl.uniform1f(U.dp.bk,P.bloom);gl.uniform1f(U.dp.warp,P.warp);gl.uniform1f(U.dp.tone,P.tone);
-    gl.uniform3f(U.dp.cg,colG[0],colG[1],colG[2]);gl.uniform3f(U.dp.cu,colU[0],colU[1],colU[2]);
-    gl.uniform3f(U.dp.cgh,colGHot[0],colGHot[1],colGHot[2]);gl.uniform3f(U.dp.cuh,colUHot[0],colUHot[1],colUHot[2]);
-    gl.uniform3f(U.dp.cb,colBoth[0],colBoth[1],colBoth[2]);
+    gl.uniform3f(U.dp.cg,pal.colG[0],pal.colG[1],pal.colG[2]);gl.uniform3f(U.dp.cu,pal.colU[0],pal.colU[1],pal.colU[2]);
+    gl.uniform3f(U.dp.cgh,pal.colGHot[0],pal.colGHot[1],pal.colGHot[2]);gl.uniform3f(U.dp.cuh,pal.colUHot[0],pal.colUHot[1],pal.colUHot[2]);
+    gl.uniform3f(U.dp.cb,pal.colBoth[0],pal.colBoth[1],pal.colBoth[2]);
     gl.disable(gl.BLEND);gl.drawArrays(gl.TRIANGLES,0,6);
     gl.useProgram(partP);gl.bindBuffer(gl.ARRAY_BUFFER,pBuf);gl.bufferData(gl.ARRAY_BUFFER,pPos,gl.DYNAMIC_DRAW);
     const lp=gl.getAttribLocation(partP,'aP');gl.enableVertexAttribArray(lp);gl.vertexAttribPointer(lp,2,gl.FLOAT,false,0,0);
