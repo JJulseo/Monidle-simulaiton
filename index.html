@@ -29,11 +29,7 @@
   .t-sensor{top:9px}.t-isf{top:46%}.t-vessel{bottom:8px}
   .elabel{position:absolute;font-family:"JetBrains Mono",monospace;font-size:10.5px;font-weight:600;transform:translateX(-50%);text-shadow:0 1px 8px rgba(0,0,0,.95)}
   .e-gfap{left:33%;top:5px;color:var(--gfap)}.e-uch{left:65%;top:5px;color:var(--uch)}
-  @keyframes sway{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
-  .sway{transform-box:fill-box;transform-origin:center bottom;animation:sway 4s ease-in-out infinite}
-  .sway:nth-of-type(3n){animation-delay:-1.3s}.sway:nth-of-type(3n+1){animation-delay:-2.6s}
-  .apt{transform-box:fill-box;transform-origin:center;transition:transform .7s cubic-bezier(.4,0,.2,1)}
-  .apt .tgt{opacity:0;transition:opacity .6s ease .1s}.apt.folded{transform:scale(.55)}.apt.folded .tgt{opacity:.95}
+  .apt .tgt{opacity:0}
   .controls{width:100%;display:flex;flex-direction:column;gap:9px}
   .crow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:9px 13px;border-radius:12px;
     background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
@@ -212,19 +208,27 @@
   const DISP=`#version 300 es
   precision highp float; precision highp sampler2D;
   in vec2 vUv; out vec4 outColor; uniform sampler2D uField,uBloom;
-  uniform float uTime,uDebug,uBloomK,uWarp,uTone; uniform vec2 uShow; uniform vec3 uColG,uColU;
+  uniform float uTime,uDebug,uBloomK,uWarp,uTone; uniform vec2 uShow; uniform vec3 uColG,uColU,uColGHot,uColUHot,uColBoth;
   ${FIELDS}
-  vec3 ramp(vec3 base,float t){ t=clamp(t,0.0,1.0);
-    vec3 dark=base*0.12, mid=base, hot=mix(base,vec3(1.0),0.75);
+  vec3 ramp(vec3 base,vec3 hot,float t){ t=clamp(t,0.0,1.0);
+    vec3 dark=base*0.12, mid=base;
     vec3 col=mix(dark,mid,smoothstep(0.0,0.5,t)); return mix(col,hot,smoothstep(0.5,1.0,t)); }
+  vec3 tonemap(vec3 col,float tone){ float luma=dot(col,vec3(0.299,0.587,0.114));
+    float tm=1.0-exp(-luma*tone); return col*(tm/max(luma,1e-4)); }
+  vec3 combine(vec2 t,vec3 colG,vec3 colU){
+    vec3 g=ramp(colG,uColGHot,t.x)*smoothstep(0.0,0.06,t.x);
+    vec3 u=ramp(colU,uColUHot,t.y)*smoothstep(0.0,0.06,t.y);
+    vec3 add=g+u; float addLum=dot(add,vec3(0.299,0.587,0.114));
+    float ov=smoothstep(0.04,0.22,min(t.x,t.y));
+    return mix(add, uColBoth*addLum, ov);
+  }
   void main(){ vec2 p=vUv;
     if(uDebug>0.5){ vec2 rw=texture(uField,p).rg; float v=(uDebug<1.5)?rw.r:rw.g; outColor=vec4(vec3(clamp(v,0.0,1.4)/1.4),1.0); return; }
     vec2 q=vec2(fbm(p*5.0+uTime*0.10), fbm(p*5.0+vec2(5.2,1.3)-uTime*0.08));
     vec2 sp=p+(q-0.5)*uWarp; sp.x=fract(sp.x);
     vec2 c=texture(uField,sp).rg*uShow; vec2 bl=texture(uBloom,sp).rg*uShow;
-    vec3 col = ramp(uColG,c.r)*smoothstep(0.0,0.06,c.r) + ramp(uColU,c.g)*smoothstep(0.0,0.06,c.g);
-    col += (ramp(uColG,bl.r)*smoothstep(0.0,0.06,bl.r)+ramp(uColU,bl.g)*smoothstep(0.0,0.06,bl.g))*uBloomK;
-    col = vec3(1.0)-exp(-col*uTone);
+    vec3 col = combine(c,uColG,uColU) + combine(bl,uColG,uColU)*uBloomK;
+    col = tonemap(col,uTone);
     float ves=smoothstep(0.155,0.07,p.y); col=mix(col,col*0.6+vec3(0.30,0.03,0.05),ves*0.78);
     float vig=smoothstep(1.28,0.32,length((vUv-0.5)*vec2(1.0,1.08))); col*=0.52+0.48*vig;
     col+=(hash(vUv*uTime)-0.5)*0.016;
@@ -262,7 +266,7 @@
     ad:{f:L(advP,'uField'),t:L(advP,'uTime'),dt:L(advP,'uDt'),v:L(advP,'uVel'),curl:L(advP,'uCurl'),curlT:L(advP,'uCurlT'),leak:L(advP,'uLeak'),clr:L(advP,'uClr'),bl:L(advP,'uBlood')},
     df:{f:L(diffP,'uField'),tx:L(diffP,'uTexel'),bl:L(diffP,'uBlood'),D:L(diffP,'uD'),leak:L(diffP,'uLeak'),hole:L(diffP,'uHole')},
     cp:{f:L(copyP,'uField')}, bl:{t:L(blurP,'uTex'),dir:L(blurP,'uDir')},
-    dp:{f:L(dispP,'uField'),b:L(dispP,'uBloom'),t:L(dispP,'uTime'),show:L(dispP,'uShow'),dbg:L(dispP,'uDebug'),bk:L(dispP,'uBloomK'),warp:L(dispP,'uWarp'),tone:L(dispP,'uTone'),cg:L(dispP,'uColG'),cu:L(dispP,'uColU')},
+    dp:{f:L(dispP,'uField'),b:L(dispP,'uBloom'),t:L(dispP,'uTime'),show:L(dispP,'uShow'),dbg:L(dispP,'uDebug'),bk:L(dispP,'uBloomK'),warp:L(dispP,'uWarp'),tone:L(dispP,'uTone'),cg:L(dispP,'uColG'),cu:L(dispP,'uColU'),cgh:L(dispP,'uColGHot'),cuh:L(dispP,'uColUHot'),cb:L(dispP,'uColBoth')},
     pt:{px:L(partP,'uPx')}
   };
   function simPass(p,fLoc,setU){gl.useProgram(p);bindQuad(p);if(setU)setU();
@@ -276,6 +280,7 @@
   function cpuVel(x,y,t,vs){if(y>0.02&&y<0.15){const b=(y-0.085)/0.06;const prof=Math.max(0,1-b*b);const pulse=0.82+0.18*Math.sin(t*2.1-x*18.85);return vs*prof*pulse;}return 0;}
 
   function hsl(h,s,l){h/=360;function f(n){const k=(n+h*12)%12;const a=s*Math.min(l,1-l);return l-a*Math.max(-1,Math.min(k-3,Math.min(9-k,1)));}return [f(0),f(8),f(4)];}
+  const colBoth=hsl(300,0.9,0.62); // co-detection hue: both biomarkers elevated at once
 
   // params
   const P={flow:.5,leak:.30,D:.12,iter:38,clr:.999,curl:0,curlT:.12,hueG:190,hueU:35,bloom:.5,warp:.16,tone:1.35};
@@ -312,22 +317,66 @@
   dB.addEventListener('click',()=>{debug=(debug+1)%3;dB.textContent=['디버그','GFAP raw','UCH raw'][debug];dB.classList.toggle('off',debug!==0);});
   tH.classList.add('off');
 
+  // Aptamer = short jointed chain, root anchored at the electrode, tip free.
+  // Unbound: idle traveling wave (cilia-like sway). Bound: chain eases into a tight
+  // coil near the tip and locks, echoing real structure-switching aptamer folding.
+  const APT_LEN=4.05, APT_N=6, APT_SEG=APT_LEN/APT_N;
+  function smoothPath(pts){
+    let d=`M${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`;
+    for(let i=1;i<pts.length-1;i++){
+      const mx=(pts[i][0]+pts[i+1][0])/2, my=(pts[i][1]+pts[i+1][1])/2;
+      d+=` Q${pts[i][0].toFixed(2)} ${pts[i][1].toFixed(2)} ${mx.toFixed(2)} ${my.toFixed(2)}`;
+    }
+    const last=pts[pts.length-1];
+    d+=` L${last[0].toFixed(2)} ${last[1].toFixed(2)}`;
+    return d;
+  }
+  function updateApt(a,fdt,isf){
+    const target=isf>0.30?1:0;
+    const rate=target>a.curl?6.0:2.2;
+    a.curl+=(target-a.curl)*Math.min(1,rate*fdt);
+    let ang=a.baseDir,x=a.ax,y=a.ay;
+    const pts=[[x,y]];
+    for(let i=0;i<APT_N;i++){
+      const tip=(i+1)/APT_N;
+      const bend=0.055; // gentle resting bow, echoes the original curve's shape
+      const waveAmp=reduce?0:(0.035+0.085*tip)*(1-a.curl);
+      const wave=Math.sin(simTime*a.freq*2*Math.PI+a.phase+i*0.32)*waveAmp;
+      const curlTurn=a.curl*(0.34+0.28*tip);
+      ang+=(bend+wave+curlTurn)*a.s;
+      x+=Math.cos(ang)*APT_SEG; y+=Math.sin(ang)*APT_SEG;
+      pts.push([x,y]);
+    }
+    a.pathEl.setAttribute('d',smoothPath(pts));
+    const tip=pts[pts.length-1];
+    a.loopEl.setAttribute('cx',tip[0].toFixed(2));a.loopEl.setAttribute('cy',tip[1].toFixed(2));
+    a.loopEl.setAttribute('r',(1.15*(1-0.3*a.curl)).toFixed(2));
+    a.tgtEl.setAttribute('cx',tip[0].toFixed(2));a.tgtEl.setAttribute('cy',tip[1].toFixed(2));
+    a.tgtEl.style.opacity=Math.max(0,Math.min(1,(a.curl-0.5)*2)).toFixed(2);
+  }
   let uchApts=[],gfapApts=[];
   (function build(){
     const NX=[{x:29,s:-1,m:'g',c:'#43dcec'},{x:37,s:-1,m:'g',c:'#43dcec'},{x:61,s:1,m:'u',c:'#f6b13e'},{x:69,s:1,m:'u',c:'#f6b13e'}];
-    let nd='',ap='';
+    let nd='',ap='',metas=[];
     NX.forEach(n=>{
       nd+=`<path d="M${n.x-1.5} 3 L${n.x+1.5} 3 L${n.x+0.25} 72 L${n.x-0.25} 72 Z" fill="url(#gold)"/>`;
       nd+=`<line x1="${n.x-0.4}" y1="4" x2="${n.x-0.1}" y2="70" stroke="#fff3cf" stroke-opacity=".4" stroke-width=".3"/>`;
-      [22,38,55].forEach((y)=>{const ax=n.x+n.s*1.3,ex=ax+n.s*3.4,ey=y-2.2,tc=(n.m==='g'?'#7be7f2':'#ffd27a');
-        ap+=`<g class="sway"><g class="apt" data-m="${n.m}">
-          <path d="M${ax} ${y} Q${ax+n.s*2.6} ${y-0.6} ${ex} ${ey+0.9}" fill="none" stroke="${n.c}" stroke-width=".55" stroke-linecap="round" opacity=".9"/>
-          <circle class="loop" cx="${ex}" cy="${ey}" r="1.15" fill="none" stroke="${n.c}" stroke-width=".55" opacity=".9"/>
-          <circle class="tgt" cx="${ex+n.s*0.3}" cy="${ey-0.2}" r=".95" fill="${tc}"/></g></g>`;});
+      [22,38,55].forEach((y)=>{const ax=n.x+n.s*1.3,tc=(n.m==='g'?'#7be7f2':'#ffd27a');
+        ap+=`<g class="apt" data-m="${n.m}">
+          <path fill="none" stroke="${n.c}" stroke-width=".5" stroke-linecap="round" opacity=".9"/>
+          <circle class="loop" r="1.15" fill="none" stroke="${n.c}" stroke-width=".5" opacity=".9"/>
+          <circle class="tgt" r=".95" fill="${tc}"/></g>`;
+        metas.push({ax,ay:y,s:n.s,m:n.m});});
     });
     document.getElementById('needles').innerHTML=nd;document.getElementById('aptamers').innerHTML=ap;
-    document.querySelectorAll('.apt').forEach(e=>{(e.dataset.m==='u'?uchApts:gfapApts).push(e);});
-    if(reduce)document.querySelectorAll('.sway').forEach(e=>e.style.animation='none');
+    document.querySelectorAll('#aptamers > .apt').forEach((g,i)=>{
+      const meta=metas[i];
+      const a={ax:meta.ax,ay:meta.ay,s:meta.s,baseDir:Math.atan2(-2.2,meta.s*3.4),
+        phase:Math.random()*Math.PI*2,freq:0.30+Math.random()*0.22,curl:0,
+        pathEl:g.querySelector('path'),loopEl:g.querySelector('.loop'),tgtEl:g.querySelector('.tgt')};
+      updateApt(a,0,0);
+      (meta.m==='u'?uchApts:gfapApts).push(a);
+    });
     let rb='';for(let k=0;k<7;k++){const x=8+k*13,y=114+(k%2)*5;rb+=`<ellipse cx="${x}" cy="${y}" rx="3" ry="2" transform="rotate(${k*25} ${x} ${y})"/>`;}
     document.getElementById('rbc').innerHTML=rb;
   })();
@@ -340,6 +389,7 @@
     const bU=Math.max(0,Math.min(1,(onset-0.06)/0.34))*0.98;
     const bG=Math.max(0,Math.min(1,(onset-0.48)/0.40))*0.92;
     const colG=hsl(P.hueG,0.85,0.6), colU=hsl(P.hueU,0.9,0.58);
+    const colGHot=hsl(P.hueG,1.0,0.66), colUHot=hsl(P.hueU,1.0,0.64);
     if(running){
       simTime+=fdt*(reduce?0.5:1.2);
       const curlAmt=P.curl;
@@ -348,8 +398,8 @@
       const it=P.iter; for(let k=0;k<it;k++) simPass(diffP,U.df.f,()=>{gl.uniform2f(U.df.tx,1/GW,1/GH);gl.uniform2f(U.df.bl,bG,bU);gl.uniform1f(U.df.D,P.D);gl.uniform1f(U.df.leak,P.leak);gl.uniform1f(U.df.hole,holes);});
       for(let i=0;i<NP;i++){let x=pPos[i*2],y=pPos[i*2+1];x+=cpuVel(x,y,simTime,P.flow)*0.05;if(x>1.0){x-=1.0;}pPos[i*2]=x;pPos[i*2+1]=y;}
       isfU+=(bU-isfU)*Math.min(1,0.45*fdt); isfG+=(bG-isfG)*Math.min(1,0.27*fdt);
-      uchApts.forEach(e=>e.classList.toggle('folded',isfU>0.30));
-      gfapApts.forEach(e=>e.classList.toggle('folded',isfG>0.30));
+      uchApts.forEach(a=>updateApt(a,fdt,isfU));
+      gfapApts.forEach(a=>updateApt(a,fdt,isfG));
       phaseEl.textContent=phaseText(bU,bG);
     }
     gl.useProgram(copyP);bindQuad(copyP);gl.bindFramebuffer(gl.FRAMEBUFFER,bA.fbo);gl.viewport(0,0,BW,BH);
@@ -364,6 +414,8 @@
     gl.uniform1f(U.dp.t,simTime);gl.uniform1f(U.dp.dbg,debug);gl.uniform2f(U.dp.show,showG,showU);
     gl.uniform1f(U.dp.bk,P.bloom);gl.uniform1f(U.dp.warp,P.warp);gl.uniform1f(U.dp.tone,P.tone);
     gl.uniform3f(U.dp.cg,colG[0],colG[1],colG[2]);gl.uniform3f(U.dp.cu,colU[0],colU[1],colU[2]);
+    gl.uniform3f(U.dp.cgh,colGHot[0],colGHot[1],colGHot[2]);gl.uniform3f(U.dp.cuh,colUHot[0],colUHot[1],colUHot[2]);
+    gl.uniform3f(U.dp.cb,colBoth[0],colBoth[1],colBoth[2]);
     gl.disable(gl.BLEND);gl.drawArrays(gl.TRIANGLES,0,6);
     gl.useProgram(partP);gl.bindBuffer(gl.ARRAY_BUFFER,pBuf);gl.bufferData(gl.ARRAY_BUFFER,pPos,gl.DYNAMIC_DRAW);
     const lp=gl.getAttribLocation(partP,'aP');gl.enableVertexAttribArray(lp);gl.vertexAttribPointer(lp,2,gl.FLOAT,false,0,0);
