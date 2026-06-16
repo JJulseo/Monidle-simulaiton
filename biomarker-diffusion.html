@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>바이오마커 확산 — 튜닝 콘솔</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{ --bg:#060912; --ink:#e8edf7; --muted:#8a93ac; --gfap:#43dcec; --uch:#f6b13e; --gold:#f0cf7e;
+    --line:rgba(255,255,255,.10); --glass:rgba(12,17,30,.66); }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:radial-gradient(1100px 700px at 72% -10%, #10172b 0%, transparent 60%), var(--bg);
+    color:var(--ink);font-family:"Inter",system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+    display:flex;justify-content:center;align-items:flex-start;min-height:100%;overflow-y:auto}
+  .app{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;max-width:560px;margin:auto;padding:clamp(12px,3vw,22px)}
+  header{text-align:center}
+  .eyebrow{font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:.3em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+  h1{font-family:"Space Grotesk",sans-serif;font-weight:600;line-height:1.05;font-size:clamp(20px,5vw,28px);letter-spacing:-.01em}
+  h1 .a{color:var(--muted);font-weight:400;margin:0 .1em}
+  .stage{position:relative;height:min(58vh,500px);aspect-ratio:4/5;max-width:100%;border-radius:15px;overflow:hidden;
+    background:#04060d;border:1px solid var(--line);box-shadow:0 32px 80px -34px rgba(0,0,0,.85), inset 0 0 0 1px rgba(255,255,255,.02)}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  .tag{position:absolute;right:10px;text-align:right;font-family:"JetBrains Mono",monospace;text-shadow:0 1px 8px rgba(0,0,0,.95)}
+  .tag .n{font-size:10px;color:var(--ink);letter-spacing:.16em;opacity:.92}.tag .t{font-size:11px;color:var(--muted);margin-top:1px}
+  .t-sensor{top:9px}.t-isf{top:46%}.t-vessel{bottom:8px}
+  .elabel{position:absolute;font-family:"JetBrains Mono",monospace;font-size:10.5px;font-weight:600;transform:translateX(-50%);text-shadow:0 1px 8px rgba(0,0,0,.95)}
+  .e-gfap{left:33%;top:5px;color:var(--gfap)}.e-uch{left:65%;top:5px;color:var(--uch)}
+  @keyframes sway{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
+  .sway{transform-box:fill-box;transform-origin:center bottom;animation:sway 4s ease-in-out infinite}
+  .sway:nth-of-type(3n){animation-delay:-1.3s}.sway:nth-of-type(3n+1){animation-delay:-2.6s}
+  .apt{transform-box:fill-box;transform-origin:center;transition:transform .7s cubic-bezier(.4,0,.2,1)}
+  .apt .tgt{opacity:0;transition:opacity .6s ease .1s}.apt.folded{transform:scale(.55)}.apt.folded .tgt{opacity:.95}
+  .controls{width:100%;display:flex;flex-direction:column;gap:9px}
+  .crow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:9px 13px;border-radius:12px;
+    background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  button{font-family:"Space Grotesk",sans-serif;font-size:12.5px;font-weight:500;color:var(--ink);background:rgba(255,255,255,.05);
+    border:1px solid var(--line);border-radius:9px;padding:8px 13px;cursor:pointer;transition:.16s}
+  button:hover{background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.22)}
+  button:active{transform:translateY(1px)}button.off{opacity:.4}
+  button:focus-visible{outline:2px solid var(--gfap);outline-offset:2px}
+  .onset{display:flex;flex-direction:column;gap:7px;padding:11px 15px;border-radius:12px;background:var(--glass);border:1px solid var(--line)}
+  .onset .top{display:flex;justify-content:space-between;align-items:baseline}
+  .onset .lbl{font-family:"Space Grotesk",sans-serif;font-size:13px;font-weight:600}
+  .onset .lbl small{font-family:"JetBrains Mono",monospace;font-weight:400;color:var(--muted);font-size:10px;margin-left:6px}
+  .onset .phase{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--gfap)}
+  .panel{padding:6px 13px 12px;border-radius:12px;background:var(--glass);border:1px solid var(--line)}
+  .panel>summary{cursor:pointer;font-family:"Space Grotesk",sans-serif;font-size:13px;font-weight:600;padding:7px 2px;list-style:none;display:flex;justify-content:space-between;align-items:center}
+  .panel>summary::-webkit-details-marker{display:none}
+  .panel>summary::after{content:'▾';color:var(--muted);font-size:11px}
+  .panel[open]>summary::after{content:'▴'}
+  .grid{display:grid;grid-template-columns:1fr;gap:9px;margin-top:6px}
+  .par{display:flex;align-items:center;gap:10px}
+  .par label{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--muted);white-space:nowrap;width:88px;flex:none}
+  .par output{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--ink);width:38px;text-align:right;flex:none}
+  input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:3px;border-radius:3px;background:rgba(255,255,255,.16);outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--gfap);cursor:pointer;box-shadow:0 0 9px rgba(67,220,236,.55)}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border:none;border-radius:50%;background:var(--gfap);cursor:pointer}
+  #onsetR{height:4px;background:linear-gradient(90deg,#2a3350,#f6b13e 55%,#43dcec)}
+  #onsetR::-webkit-slider-thumb{background:#fff;width:18px;height:18px}
+  .toggles{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+  .hint{font-family:"JetBrains Mono",monospace;font-size:9.5px;color:var(--muted);text-align:center;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="eyebrow">Interstitial Aptamer Biosensor · 튜닝 콘솔</div>
+    <h1>혈관<span class="a">↑</span>간질액<span class="a">↑</span>센서</h1>
+  </header>
+  <div class="stage" id="stage">
+    <canvas id="gl"></canvas>
+    <svg class="ov" viewBox="0 0 100 125" preserveAspectRatio="none" aria-hidden="true">
+      <defs><linearGradient id="gold" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#b8923c"/><stop offset=".5" stop-color="#f6dd97"/><stop offset="1" stop-color="#a9842f"/></linearGradient></defs>
+      <rect x="0" y="0" width="100" height="3.6" fill="#cfd6e0" opacity=".82"/>
+      <rect x="0" y="3.6" width="100" height="4.6" fill="#f0c4a6" opacity=".82"/>
+      <rect x="0" y="8.2" width="100" height="7.6" fill="#e29a96" opacity=".7"/>
+      <rect x="25.5" y="1" width="16" height="2.4" rx="1" fill="url(#gold)"/>
+      <rect x="57.5" y="1" width="16" height="2.4" rx="1" fill="url(#gold)"/>
+      <g id="needles"></g><g id="aptamers"></g>
+      <line id="wallLine" x1="0" y1="106" x2="100" y2="106" stroke="#e5384f" stroke-width=".6" stroke-opacity=".5" stroke-dasharray="3 1.5"/>
+      <g id="rbc" fill="#9a1f2b" opacity=".78"></g>
+    </svg>
+    <div class="ov">
+      <div class="tag t-sensor"><div class="n">03 · 센서</div><div class="t">압타머 포획</div></div>
+      <div class="tag t-isf"><div class="n">02 · 간질액</div><div class="t">확산 + 미세대류</div></div>
+      <div class="tag t-vessel"><div class="n">01 · 혈관</div><div class="t">혈류 → 벽 누출</div></div>
+      <div class="elabel e-gfap">GFAP</div><div class="elabel e-uch">UCH-L1</div>
+    </div>
+  </div>
+  <div class="controls">
+    <div class="onset">
+      <div class="top"><span class="lbl">뇌졸중 진행도 <small>STROKE ONSET</small></span><span class="phase" id="phase">정상 (Baseline)</span></div>
+      <input id="onsetR" type="range" min="0" max="100" value="100">
+    </div>
+    <div class="crow">
+      <button id="play">⏸ 일시정지</button><button id="reset">↺ 리셋</button>
+      <button id="tUch">UCH-L1</button><button id="tGfap">GFAP</button>
+      <button id="tHole">구멍</button><button id="dbg">디버그</button>
+    </div>
+
+    <details class="panel" open>
+      <summary>물리 파라미터</summary>
+      <div class="grid">
+        <div class="par"><label>혈류 속도</label><input id="p_flow" type="range" min="0" max="150" value="50"><output id="o_flow"></output></div>
+        <div class="par"><label>누출 강도</label><input id="p_leak" type="range" min="5" max="100" value="30"><output id="o_leak"></output></div>
+        <div class="par"><label>확산 D</label><input id="p_D" type="range" min="3" max="124" value="120"><output id="o_D"></output></div>
+        <div class="par"><label>확산 반복</label><input id="p_iter" type="range" min="6" max="60" value="38"><output id="o_iter"></output></div>
+        <div class="par"><label>clearance</label><input id="p_clr" type="range" min="900" max="1000" value="999"><output id="o_clr"></output></div>
+        <div class="par"><label>curl 세기</label><input id="p_curl" type="range" min="0" max="60" value="25"><output id="o_curl"></output></div>
+        <div class="par"><label>curl 진화</label><input id="p_curlT" type="range" min="0" max="60" value="12"><output id="o_curlT"></output></div>
+      </div>
+    </details>
+
+    <details class="panel">
+      <summary>렌더 / 색</summary>
+      <div class="grid">
+        <div class="par"><label>GFAP 색조</label><input id="p_hueG" type="range" min="0" max="360" value="190"><output id="o_hueG"></output></div>
+        <div class="par"><label>UCH 색조</label><input id="p_hueU" type="range" min="0" max="360" value="35"><output id="o_hueU"></output></div>
+        <div class="par"><label>블룸</label><input id="p_bloom" type="range" min="0" max="120" value="50"><output id="o_bloom"></output></div>
+        <div class="par"><label>질감(워프)</label><input id="p_warp" type="range" min="0" max="60" value="16"><output id="o_warp"></output></div>
+        <div class="par"><label>톤매핑</label><input id="p_tone" type="range" min="60" max="240" value="135"><output id="o_tone"></output></div>
+      </div>
+    </details>
+    <div class="hint">curl 0 = 순수 확산(균일·정직) · curl↑ 시 진화도 같이↑ 하면 빈 띠 완화 · 마음에 드는 조합 찾으면 값 알려줘, 그걸로 고정할게</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function(){
+  const canvas=document.getElementById('gl');
+  const gl=canvas.getContext('webgl2',{antialias:false,premultipliedAlpha:false});
+  if(!gl){document.getElementById('stage').innerHTML='<div style="color:#e8edf7;font-family:monospace;padding:30px;text-align:center">WebGL2 미지원.</div>';return;}
+  gl.getExtension('EXT_color_buffer_float');
+  const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const FIELDS=`
+  float hash(vec2 p){ p=fract(p*vec2(123.34,345.45)); p+=dot(p,p+34.345); return fract(p.x*p.y); }
+  float vnoise(vec2 p){ vec2 i=floor(p),f=fract(p); vec2 u=f*f*(3.0-2.0*f);
+    float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+    return mix(mix(a,b,u.x),mix(c,d,u.x),u.y); }
+  float fbm(vec2 p){ float s=0.0,a=0.5; for(int i=0;i<4;i++){s+=a*vnoise(p);p=p*2.02+vec2(1.7,9.2);a*=0.5;} return s; }
+  vec2 curl(vec2 p){ float e=0.09;
+    float a=fbm(p+vec2(0.0,e)),b=fbm(p-vec2(0.0,e)),c=fbm(p+vec2(e,0.0)),d=fbm(p-vec2(e,0.0));
+    return vec2(a-b, d-c)/(2.0*e); }
+  const vec2 LX=vec2(0.29,0.37); const vec2 RX=vec2(0.61,0.69);
+  float nearShaft(float x,vec2 xs){ float dd=min(abs(x-xs.x),abs(x-xs.y)); return smoothstep(0.022,0.008,dd); }
+  float leakGate(float x){ return max(smoothstep(0.060,0.026,abs(x-0.34)), smoothstep(0.060,0.026,abs(x-0.66))); }
+  // uHole: 0 = uniform wall, 1 = discrete holes
+  float Dmap(vec2 p, float D, float holes){
+    float wall=smoothstep(0.150,0.158,p.y)*smoothstep(0.176,0.166,p.y);
+    float perm=mix(0.30, leakGate(p.x), holes);     // holes? gated : uniform-ish
+    float block=wall*(1.0-perm);
+    return mix(D, 0.004, block);
+  }`;
+
+  const VERT=`#version 300 es
+  in vec2 aPos; out vec2 vUv; void main(){vUv=aPos*0.5+0.5;gl_Position=vec4(aPos,0.0,1.0);}`;
+
+  const ADVECT=`#version 300 es
+  precision highp float; precision highp sampler2D;
+  in vec2 vUv; out vec4 outColor; uniform sampler2D uField;
+  uniform float uTime,uDt,uVel,uCurl,uCurlT,uLeak,uClr; uniform vec2 uBlood;
+  ${FIELDS}
+  vec2 vel(vec2 p){
+    if(p.y<0.155){ float b=(p.y-0.085)/0.06; float prof=max(0.0,1.0-b*b);
+      float pulse=0.82+0.18*sin(uTime*2.1-p.x*18.85); return vec2(uVel*prof*pulse,0.0); }
+    return curl(p*3.4 + vec2(uTime*uCurlT, uTime*uCurlT*1.15)) * uCurl;
+  }
+  void main(){ vec2 p=vUv;
+    vec2 src=p - vel(p)*uDt; src.x=fract(src.x);
+    vec2 c=texture(uField, src).rg;
+    if(p.y<0.13){ float k=smoothstep(0.13,0.03,p.y); c+=k*uLeak*max(vec2(0.0),uBlood-c); }
+    if(p.y>0.16){ c*=uClr; }
+    if(p.y>0.42&&p.y<0.875){ c.r*=(1.0-0.8*nearShaft(p.x,LX)*uDt*8.0); c.g*=(1.0-0.8*nearShaft(p.x,RX)*uDt*8.0); }
+    if(p.y>0.86){ c*=0.6; }
+    outColor=vec4(clamp(c,0.0,1.4),0.0,1.0);
+  }`;
+
+  const DIFFUSE=`#version 300 es
+  precision highp float; precision highp sampler2D;
+  in vec2 vUv; out vec4 outColor; uniform sampler2D uField; uniform vec2 uTexel,uBlood; uniform float uD,uLeak,uHole;
+  ${FIELDS}
+  vec2 samp(vec2 q){ q.x=fract(q.x); return texture(uField,q).rg; }
+  void main(){ vec2 p=vUv;
+    vec2 c=samp(p), cl=samp(p+vec2(-uTexel.x,0.0)), cr=samp(p+vec2(uTexel.x,0.0)),
+         cu=samp(p+vec2(0.0,uTexel.y)), cd=samp(p+vec2(0.0,-uTexel.y));
+    float Dc=Dmap(p,uD,uHole);
+    float DL=0.5*(Dc+Dmap(p+vec2(-uTexel.x,0.0),uD,uHole)), DR=0.5*(Dc+Dmap(p+vec2(uTexel.x,0.0),uD,uHole));
+    float DU=0.5*(Dc+Dmap(p+vec2(0.0,uTexel.y),uD,uHole)), DD=0.5*(Dc+Dmap(p+vec2(0.0,-uTexel.y),uD,uHole));
+    c += DL*(cl-c)+DR*(cr-c)+DU*(cu-c)+DD*(cd-c);
+    if(p.y<0.13){ float k=smoothstep(0.13,0.03,p.y); c+=k*uLeak*max(vec2(0.0),uBlood-c); }
+    if(p.y>0.42&&p.y<0.875){ c.r*=(1.0-0.4*nearShaft(p.x,LX)); c.g*=(1.0-0.4*nearShaft(p.x,RX)); }
+    if(p.y>0.86){ c*=0.85; }
+    outColor=vec4(clamp(c,0.0,1.4),0.0,1.0); }`;
+
+  const COPY=`#version 300 es
+  precision highp float; precision highp sampler2D;
+  in vec2 vUv; out vec4 o; uniform sampler2D uField; void main(){ o=vec4(texture(uField,vUv).rg,0.0,1.0); }`;
+  const BLUR=`#version 300 es
+  precision highp float; precision highp sampler2D;
+  in vec2 vUv; out vec4 o; uniform sampler2D uTex; uniform vec2 uDir;
+  void main(){ vec2 c=texture(uTex,vUv).rg*0.2270;
+    c+=texture(uTex,vUv+uDir*1.3846).rg*0.3162; c+=texture(uTex,vUv-uDir*1.3846).rg*0.3162;
+    c+=texture(uTex,vUv+uDir*3.2308).rg*0.0703; c+=texture(uTex,vUv-uDir*3.2308).rg*0.0703; o=vec4(c,0.0,1.0); }`;
+
+  const DISP=`#version 300 es
+  precision highp float; precision highp sampler2D;
+  in vec2 vUv; out vec4 outColor; uniform sampler2D uField,uBloom;
+  uniform float uTime,uDebug,uBloomK,uWarp,uTone; uniform vec2 uShow; uniform vec3 uColG,uColU;
+  ${FIELDS}
+  vec3 ramp(vec3 base,float t){ t=clamp(t,0.0,1.0);
+    vec3 dark=base*0.12, mid=base, hot=mix(base,vec3(1.0),0.75);
+    vec3 col=mix(dark,mid,smoothstep(0.0,0.5,t)); return mix(col,hot,smoothstep(0.5,1.0,t)); }
+  void main(){ vec2 p=vUv;
+    if(uDebug>0.5){ vec2 rw=texture(uField,p).rg; float v=(uDebug<1.5)?rw.r:rw.g; outColor=vec4(vec3(clamp(v,0.0,1.4)/1.4),1.0); return; }
+    vec2 q=vec2(fbm(p*5.0+uTime*0.10), fbm(p*5.0+vec2(5.2,1.3)-uTime*0.08));
+    vec2 sp=p+(q-0.5)*uWarp; sp.x=fract(sp.x);
+    vec2 c=texture(uField,sp).rg*uShow; vec2 bl=texture(uBloom,sp).rg*uShow;
+    vec3 col = ramp(uColG,c.r)*smoothstep(0.0,0.06,c.r) + ramp(uColU,c.g)*smoothstep(0.0,0.06,c.g);
+    col += (ramp(uColG,bl.r)*smoothstep(0.0,0.06,bl.r)+ramp(uColU,bl.g)*smoothstep(0.0,0.06,bl.g))*uBloomK;
+    col = vec3(1.0)-exp(-col*uTone);
+    float ves=smoothstep(0.155,0.07,p.y); col=mix(col,col*0.6+vec3(0.30,0.03,0.05),ves*0.78);
+    float vig=smoothstep(1.28,0.32,length((vUv-0.5)*vec2(1.0,1.08))); col*=0.52+0.48*vig;
+    col+=(hash(vUv*uTime)-0.5)*0.016;
+    outColor=vec4(col,1.0); }`;
+
+  const PVERT=`#version 300 es
+  in vec2 aP; uniform float uPx; void main(){gl_Position=vec4(aP*2.0-1.0,0.0,1.0);gl_PointSize=uPx;}`;
+  const PFRAG=`#version 300 es
+  precision highp float; out vec4 o;
+  void main(){ float a=smoothstep(0.5,0.0,length(gl_PointCoord-0.5)); o=vec4(vec3(1.0,0.74,0.66)*a,a); }`;
+
+  function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);
+    if(!gl.getShaderParameter(x,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(x)+'\n'+s);return x;}
+  function prog(v,f){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,v));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p;}
+  const advP=prog(VERT,ADVECT),diffP=prog(VERT,DIFFUSE),copyP=prog(VERT,COPY),blurP=prog(VERT,BLUR),dispP=prog(VERT,DISP),partP=prog(PVERT,PFRAG);
+
+  const quad=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,quad);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+  function bindQuad(p){const l=gl.getAttribLocation(p,'aPos');gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0);}
+
+  const GW=160,GH=200,BW=80,BH=100;
+  function target(w,h){const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA16F,w,h,0,gl.RGBA,gl.HALF_FLOAT,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    const fbo=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);return {tex,fbo,w,h};}
+  let A=target(GW,GH),B=target(GW,GH),bA=target(BW,BH),bB=target(BW,BH);
+  function clearF(t){gl.bindFramebuffer(gl.FRAMEBUFFER,t.fbo);gl.viewport(0,0,t.w,t.h);gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT);}
+  clearF(A);clearF(B);
+
+  function L(p,n){return gl.getUniformLocation(p,n);}
+  const U={
+    ad:{f:L(advP,'uField'),t:L(advP,'uTime'),dt:L(advP,'uDt'),v:L(advP,'uVel'),curl:L(advP,'uCurl'),curlT:L(advP,'uCurlT'),leak:L(advP,'uLeak'),clr:L(advP,'uClr'),bl:L(advP,'uBlood')},
+    df:{f:L(diffP,'uField'),tx:L(diffP,'uTexel'),bl:L(diffP,'uBlood'),D:L(diffP,'uD'),leak:L(diffP,'uLeak'),hole:L(diffP,'uHole')},
+    cp:{f:L(copyP,'uField')}, bl:{t:L(blurP,'uTex'),dir:L(blurP,'uDir')},
+    dp:{f:L(dispP,'uField'),b:L(dispP,'uBloom'),t:L(dispP,'uTime'),show:L(dispP,'uShow'),dbg:L(dispP,'uDebug'),bk:L(dispP,'uBloomK'),warp:L(dispP,'uWarp'),tone:L(dispP,'uTone'),cg:L(dispP,'uColG'),cu:L(dispP,'uColU')},
+    pt:{px:L(partP,'uPx')}
+  };
+  function simPass(p,fLoc,setU){gl.useProgram(p);bindQuad(p);if(setU)setU();
+    gl.bindFramebuffer(gl.FRAMEBUFFER,B.fbo);gl.viewport(0,0,GW,GH);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,A.tex);gl.uniform1i(fLoc,0);
+    gl.disable(gl.BLEND);gl.drawArrays(gl.TRIANGLES,0,6);const t=A;A=B;B=t;}
+
+  const NP=reduce?260:480;const pPos=new Float32Array(NP*2);
+  function spawn(i){pPos[i*2]=Math.random();pPos[i*2+1]=0.035+Math.random()*0.09;}
+  for(let i=0;i<NP;i++)spawn(i);const pBuf=gl.createBuffer();
+  function cpuVel(x,y,t,vs){if(y>0.02&&y<0.15){const b=(y-0.085)/0.06;const prof=Math.max(0,1-b*b);const pulse=0.82+0.18*Math.sin(t*2.1-x*18.85);return vs*prof*pulse;}return 0;}
+
+  function hsl(h,s,l){h/=360;function f(n){const k=(n+h*12)%12;const a=s*Math.min(l,1-l);return l-a*Math.max(-1,Math.min(k-3,Math.min(9-k,1)));}return [f(0),f(8),f(4)];}
+
+  // params
+  const P={flow:.5,leak:.30,D:.12,iter:38,clr:.999,curl:0,curlT:.12,hueG:190,hueU:35,bloom:.5,warp:.16,tone:1.35};
+  let running=true,onset=1.0,simTime=0,showG=1,showU=1,curlOn=0,holes=0,debug=0,dpr=Math.min(window.devicePixelRatio||1,2),isfU=0,isfG=0;
+
+  function resize(){dpr=Math.min(window.devicePixelRatio||1,2);const r=canvas.getBoundingClientRect();
+    canvas.width=Math.max(2,Math.round(r.width*dpr));canvas.height=Math.max(2,Math.round(r.height*dpr));}
+  window.addEventListener('resize',resize);
+
+  // wire sliders
+  function bind(id,key,fmt,scale){const el=document.getElementById('p_'+id),out=document.getElementById('o_'+id);
+    function upd(){P[key]=scale(parseFloat(el.value));out.textContent=fmt(P[key]);}el.addEventListener('input',upd);upd();}
+  bind('flow','flow',v=>v.toFixed(2),v=>v/100);
+  bind('leak','leak',v=>v.toFixed(2),v=>v/100);
+  bind('D','D',v=>v.toFixed(3),v=>v/1000);
+  bind('iter','iter',v=>v.toFixed(0),v=>Math.round(v));
+  bind('clr','clr',v=>v.toFixed(3),v=>v/1000);
+  bind('curl','curl',v=>v.toFixed(2),v=>v/100);
+  bind('curlT','curlT',v=>v.toFixed(2),v=>v/100);
+  bind('hueG','hueG',v=>v.toFixed(0),v=>v);
+  bind('hueU','hueU',v=>v.toFixed(0),v=>v);
+  bind('bloom','bloom',v=>v.toFixed(2),v=>v/100);
+  bind('warp','warp',v=>v.toFixed(3),v=>v/1000);
+  bind('tone','tone',v=>v.toFixed(2),v=>v/100);
+
+  const playBtn=document.getElementById('play'),phaseEl=document.getElementById('phase'),onsetEl=document.getElementById('onsetR');
+  playBtn.addEventListener('click',()=>{running=!running;playBtn.textContent=running?'⏸ 일시정지':'▶ 재생';});
+  document.getElementById('reset').addEventListener('click',()=>{clearF(A);clearF(B);simTime=0;isfU=0;isfG=0;for(let i=0;i<NP;i++)spawn(i);});
+  onsetEl.addEventListener('input',e=>onset=e.target.value/100);
+  const tG=document.getElementById('tGfap'),tU=document.getElementById('tUch'),tH=document.getElementById('tHole'),dB=document.getElementById('dbg');
+  tG.addEventListener('click',()=>{showG=showG?0:1;tG.classList.toggle('off',!showG);});
+  tU.addEventListener('click',()=>{showU=showU?0:1;tU.classList.toggle('off',!showU);});
+  tH.addEventListener('click',()=>{holes=holes?0:1;tH.classList.toggle('off',!holes);document.getElementById('wallLine').setAttribute('stroke-dasharray',holes?'9 5':'3 1.5');});
+  dB.addEventListener('click',()=>{debug=(debug+1)%3;dB.textContent=['디버그','GFAP raw','UCH raw'][debug];dB.classList.toggle('off',debug!==0);});
+  tH.classList.add('off');
+
+  let uchApts=[],gfapApts=[];
+  (function build(){
+    const NX=[{x:29,s:-1,m:'g',c:'#43dcec'},{x:37,s:-1,m:'g',c:'#43dcec'},{x:61,s:1,m:'u',c:'#f6b13e'},{x:69,s:1,m:'u',c:'#f6b13e'}];
+    let nd='',ap='';
+    NX.forEach(n=>{
+      nd+=`<path d="M${n.x-1.5} 3 L${n.x+1.5} 3 L${n.x+0.25} 72 L${n.x-0.25} 72 Z" fill="url(#gold)"/>`;
+      nd+=`<line x1="${n.x-0.4}" y1="4" x2="${n.x-0.1}" y2="70" stroke="#fff3cf" stroke-opacity=".4" stroke-width=".3"/>`;
+      [22,38,55].forEach((y)=>{const ax=n.x+n.s*1.3,ex=ax+n.s*3.4,ey=y-2.2,tc=(n.m==='g'?'#7be7f2':'#ffd27a');
+        ap+=`<g class="sway"><g class="apt" data-m="${n.m}">
+          <path d="M${ax} ${y} Q${ax+n.s*2.6} ${y-0.6} ${ex} ${ey+0.9}" fill="none" stroke="${n.c}" stroke-width=".55" stroke-linecap="round" opacity=".9"/>
+          <circle class="loop" cx="${ex}" cy="${ey}" r="1.15" fill="none" stroke="${n.c}" stroke-width=".55" opacity=".9"/>
+          <circle class="tgt" cx="${ex+n.s*0.3}" cy="${ey-0.2}" r=".95" fill="${tc}"/></g></g>`;});
+    });
+    document.getElementById('needles').innerHTML=nd;document.getElementById('aptamers').innerHTML=ap;
+    document.querySelectorAll('.apt').forEach(e=>{(e.dataset.m==='u'?uchApts:gfapApts).push(e);});
+    if(reduce)document.querySelectorAll('.sway').forEach(e=>e.style.animation='none');
+    let rb='';for(let k=0;k<7;k++){const x=8+k*13,y=114+(k%2)*5;rb+=`<ellipse cx="${x}" cy="${y}" rx="3" ry="2" transform="rotate(${k*25} ${x} ${y})"/>`;}
+    document.getElementById('rbc').innerHTML=rb;
+  })();
+  function phaseText(bu,bg){ if(bu<0.02&&bg<0.02)return '정상 (Baseline)'; if(bg<0.04)return 'UCH-L1 상승 — 뉴런 손상';
+    if(bg<0.55)return 'GFAP 상승 — 별아교세포 반응'; return '급성기 — 두 마커 포획'; }
+
+  resize();let last=performance.now();
+  function frame(now){
+    const fdt=Math.min((now-last)/1000,0.05);last=now;
+    const bU=Math.max(0,Math.min(1,(onset-0.06)/0.34))*0.98;
+    const bG=Math.max(0,Math.min(1,(onset-0.48)/0.40))*0.92;
+    const colG=hsl(P.hueG,0.85,0.6), colU=hsl(P.hueU,0.9,0.58);
+    if(running){
+      simTime+=fdt*(reduce?0.5:1.2);
+      const curlAmt=P.curl;
+      simPass(advP,U.ad.f,()=>{gl.uniform1f(U.ad.t,simTime);gl.uniform1f(U.ad.dt,0.10);gl.uniform1f(U.ad.v,P.flow);
+        gl.uniform1f(U.ad.curl,curlAmt);gl.uniform1f(U.ad.curlT,P.curlT);gl.uniform1f(U.ad.leak,P.leak);gl.uniform1f(U.ad.clr,P.clr);gl.uniform2f(U.ad.bl,bG,bU);});
+      const it=P.iter; for(let k=0;k<it;k++) simPass(diffP,U.df.f,()=>{gl.uniform2f(U.df.tx,1/GW,1/GH);gl.uniform2f(U.df.bl,bG,bU);gl.uniform1f(U.df.D,P.D);gl.uniform1f(U.df.leak,P.leak);gl.uniform1f(U.df.hole,holes);});
+      for(let i=0;i<NP;i++){let x=pPos[i*2],y=pPos[i*2+1];x+=cpuVel(x,y,simTime,P.flow)*0.05;if(x>1.0){x-=1.0;}pPos[i*2]=x;pPos[i*2+1]=y;}
+      isfU+=(bU-isfU)*Math.min(1,0.45*fdt); isfG+=(bG-isfG)*Math.min(1,0.27*fdt);
+      uchApts.forEach(e=>e.classList.toggle('folded',isfU>0.30));
+      gfapApts.forEach(e=>e.classList.toggle('folded',isfG>0.30));
+      phaseEl.textContent=phaseText(bU,bG);
+    }
+    gl.useProgram(copyP);bindQuad(copyP);gl.bindFramebuffer(gl.FRAMEBUFFER,bA.fbo);gl.viewport(0,0,BW,BH);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,A.tex);gl.uniform1i(U.cp.f,0);gl.disable(gl.BLEND);gl.drawArrays(gl.TRIANGLES,0,6);
+    gl.useProgram(blurP);bindQuad(blurP);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,bB.fbo);gl.viewport(0,0,BW,BH);gl.bindTexture(gl.TEXTURE_2D,bA.tex);gl.uniform1i(U.bl.t,0);gl.uniform2f(U.bl.dir,1/BW,0);gl.drawArrays(gl.TRIANGLES,0,6);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,bA.fbo);gl.viewport(0,0,BW,BH);gl.bindTexture(gl.TEXTURE_2D,bB.tex);gl.uniform2f(U.bl.dir,0,1/BH);gl.drawArrays(gl.TRIANGLES,0,6);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,canvas.width,canvas.height);
+    gl.useProgram(dispP);bindQuad(dispP);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,A.tex);gl.uniform1i(U.dp.f,0);
+    gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,bA.tex);gl.uniform1i(U.dp.b,1);
+    gl.uniform1f(U.dp.t,simTime);gl.uniform1f(U.dp.dbg,debug);gl.uniform2f(U.dp.show,showG,showU);
+    gl.uniform1f(U.dp.bk,P.bloom);gl.uniform1f(U.dp.warp,P.warp);gl.uniform1f(U.dp.tone,P.tone);
+    gl.uniform3f(U.dp.cg,colG[0],colG[1],colG[2]);gl.uniform3f(U.dp.cu,colU[0],colU[1],colU[2]);
+    gl.disable(gl.BLEND);gl.drawArrays(gl.TRIANGLES,0,6);
+    gl.useProgram(partP);gl.bindBuffer(gl.ARRAY_BUFFER,pBuf);gl.bufferData(gl.ARRAY_BUFFER,pPos,gl.DYNAMIC_DRAW);
+    const lp=gl.getAttribLocation(partP,'aP');gl.enableVertexAttribArray(lp);gl.vertexAttribPointer(lp,2,gl.FLOAT,false,0,0);
+    gl.uniform1f(U.pt.px,3.0*dpr);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);gl.drawArrays(gl.POINTS,0,NP);gl.disable(gl.BLEND);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
