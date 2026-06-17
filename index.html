@@ -180,7 +180,7 @@
   void main(){ vec2 p=vUv;
     vec2 src=p - vel(p)*uDt; src.x=fract(src.x);
     vec2 c=texture(uField, src).rg;
-    if(p.y<0.13){ float k=smoothstep(0.13,0.03,p.y); c+=k*uLeak*(uBlood-c); }
+    if(p.y<0.13){ float k=smoothstep(0.13,0.03,p.y); c+=k*uLeak*max(vec2(0.0),uBlood-c); }
     float bloodTot=uBlood.r+uBlood.g;
     if(p.y>0.13){ c*=(1.0-smoothstep(0.10,0.0,bloodTot)*0.012); }
     if(p.y>0.16){ c*=uClr; }
