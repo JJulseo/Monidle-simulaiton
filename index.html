@@ -96,7 +96,7 @@
       <div class="top"><span class="lbl">뇌졸중 진행도 <small>STROKE ONSET</small></span><span class="phase" id="phase">정상 (Baseline)</span></div>
       <input id="onsetR" type="range" min="0" max="100" value="0" tabindex="-1">
       <div class="onset-speed">
-        <label>진행 속도</label>
+        <label>방출 속도</label>
         <input id="speedR" type="range" min="5" max="100" value="20">
         <output id="o_speed"></output>
       </div>
@@ -388,11 +388,13 @@
     return d;
   }
   function updateApt(a,fdt,conc){
-    // Threshold sits inside the real concentration's natural fluctuation band at this
-    // depth, so aptamers flicker fold/unfold as local concentration drifts above/below it —
-    // closer matches the real reversible structure-switching equilibrium than a one-shot trigger.
-    const target=conc>0.04?1:0;
-    const rate=target>a.curl?6.0:2.2;
+    // Langmuir isotherm: θ = [C]/([C]+Kd). At [C]=KD_NORM, half of aptamers are folded.
+    // Asymmetric kinetics (fast ka / slow kd) match real structure-switching EAB sensors:
+    // aptamers appear to "hold" biomarker longer during the declining phase, but local ISF
+    // depletion is <1% (diffusive flux >> binding flux by ~100×) so no field correction needed.
+    const KD_NORM=0.07;
+    const target=conc/(conc+KD_NORM);
+    const rate=target>a.curl?5.0:1.8;
     a.curl+=(target-a.curl)*Math.min(1,rate*fdt);
     let ang=a.baseDir,x=a.ax,y=a.ay;
     const pts=[[x,y]];
@@ -415,21 +417,26 @@
   (function build(){
     const NX=[{x:29,s:-1,m:'g',c:'#43dcec'},{x:37,s:-1,m:'g',c:'#43dcec'},{x:61,s:1,m:'u',c:'#f6b13e'},{x:69,s:1,m:'u',c:'#f6b13e'}];
     let nd='',ap='',metas=[];
+    // electrode half-width tapers linearly from 1.5 (top) to 0.25 (tip)
+    const hw=y=>Math.max(0.25,1.5-1.25*(y-3)/69);
     NX.forEach(n=>{
       nd+=`<path d="M${n.x-1.5} 3 L${n.x+1.5} 3 L${n.x+0.25} 72 L${n.x-0.25} 72 Z" fill="url(#gold)"/>`;
       nd+=`<line x1="${n.x-0.4}" y1="4" x2="${n.x-0.1}" y2="70" stroke="#fff3cf" stroke-opacity=".4" stroke-width=".3"/>`;
-      [7,15,23,31,39,47,55,62,67,71].forEach((y,yi)=>{
+      // aptamers only in ISF (below dermis at SVG y≈16); roots sit on the electrode surface
+      [17,23,29,35,41,47,53,59,65,71].forEach((y,yi)=>{
         const altS=(yi%2===0)?n.s:-n.s;
-        const ax=n.x+altS*3.0;
+        const ax=n.x+altS*hw(y);
         ap+=`<g class="apt" data-m="${n.m}"><path fill="none" stroke="${n.c}" stroke-width=".5" stroke-linecap="round" opacity=".78"/></g>`;
         metas.push({ax,ay:y,s:altS,m:n.m});});
     });
     document.getElementById('needles').innerHTML=nd;document.getElementById('aptamers').innerHTML=ap;
     document.querySelectorAll('#aptamers > .apt').forEach((g,i)=>{
       const meta=metas[i];
-      const a={ax:meta.ax,ay:meta.ay,s:meta.s,m:meta.m,baseDir:Math.atan2(-2.2,meta.s*3.4),
+      // baseDir: point purely outward (horizontal) from the electrode surface
+      // uvx: sample 1.4 SVG units outward from root — clear of electrode surface
+      const a={ax:meta.ax,ay:meta.ay,s:meta.s,m:meta.m,baseDir:meta.s>0?0:Math.PI,
         phase:Math.random()*Math.PI*2,freq:0.30+Math.random()*0.22,curl:0,
-        uvx:meta.ax/100,uvy:1-meta.ay/125,
+        uvx:(meta.ax+meta.s*1.4)/100,uvy:1-meta.ay/125,
         pathEl:g.querySelector('path')};
       updateApt(a,0,0);
       allApts.push(a);
@@ -438,16 +445,17 @@
     document.getElementById('rbc').innerHTML=rb;
   })();
   function phaseText(bu,bg,tHr){
-    const h=tHr.toFixed(1)+'h';
-    if(bu<0.05&&bg<0.05) return `정상 (Baseline) · ${h}`;
+    const h=tHr.toFixed(0)+'h';
+    if(bu<0.05&&bg<0.05&&tHr<4) return `정상 (Baseline) · ${h}`;
+    if(bu<0.05&&bg<0.05&&tHr>=4) return `회복 완료 (Recovered) · ${h}`;
     if(bu>bg*1.3) return `UCH-L1 상승 — 뉴런 손상 · ${h}`;
     if(bg>bu*1.3) return `GFAP 상승 — 별아교세포 반응 · ${h}`;
     return `급성기 — 두 마커 동반 상승 · ${h}`;
   }
 
   // Real GFAP/UCH-L1 release kinetics overlap rather than alternate: UCH-L1 spikes
-  // early and fades fast, GFAP rises slower and stays elevated. onset (0..1) is mapped
-  // across a compressed 72h window so the full overlapping shape plays out on the slider.
+  // early and fades fast; GFAP rises slower. onset (0..1) maps a 168h (7-day) window
+  // covering acute phase + treatment-assisted recovery back to near-baseline.
   function biomarkerPulse(t,tPeak,riseTau,decayHalfLife){
     const rise=1-Math.exp(-t/riseTau);
     const decay=Math.pow(0.5,Math.max(0,t-tPeak)/decayHalfLife);
@@ -457,9 +465,9 @@
   resize();let last=performance.now();
   function frame(now){
     const fdt=Math.min((now-last)/1000,0.05);last=now;
-    const tHr=onset*72;
+    const tHr=onset*168;
     const bU=biomarkerPulse(tHr,8,3,9)*0.98;
-    const bG=biomarkerPulse(tHr,24,10,48)*0.92;
+    const bG=biomarkerPulse(tHr,24,10,30)*0.92; // decay t½ 30h: ~3% of peak by 168h → "회복 완료"
     const pal=getPalette(colorMode);
     if(running){
       if(onset<1) onset=Math.min(1,onset+onsetHrPerSec*fdt/72);
