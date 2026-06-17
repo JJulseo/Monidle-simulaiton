@@ -180,7 +180,9 @@
   void main(){ vec2 p=vUv;
     vec2 src=p - vel(p)*uDt; src.x=fract(src.x);
     vec2 c=texture(uField, src).rg;
-    if(p.y<0.13){ float k=smoothstep(0.13,0.03,p.y); c+=k*uLeak*max(vec2(0.0),uBlood-c); }
+    if(p.y<0.13){ float k=smoothstep(0.13,0.03,p.y); c+=k*uLeak*(uBlood-c); }
+    float bloodTot=uBlood.r+uBlood.g;
+    if(p.y>0.13){ c*=(1.0-smoothstep(0.10,0.0,bloodTot)*0.012); }
     if(p.y>0.16){ c*=uClr; }
     if(p.y>0.42&&p.y<0.875){ c.r*=(1.0-0.25*nearShaft(p.x,LX)*uDt*8.0); c.g*=(1.0-0.25*nearShaft(p.x,RX)*uDt*8.0); }
     if(p.y>0.86){ c*=0.6; }
@@ -388,30 +390,32 @@
     return d;
   }
   function updateApt(a,fdt,conc){
-    // Langmuir isotherm: θ = [C]/([C]+Kd). At [C]=KD_NORM, half of aptamers are folded.
-    // Asymmetric kinetics (fast ka / slow kd) match real structure-switching EAB sensors:
-    // aptamers appear to "hold" biomarker longer during the declining phase, but local ISF
-    // depletion is <1% (diffusive flux >> binding flux by ~100×) so no field correction needed.
-    const KD_NORM=0.07;
-    const target=conc/(conc+KD_NORM);
-    const rate=target>a.curl?5.0:1.8;
+    // Binary snap: instantly recognizable bound vs unbound states.
+    // Fast ka (8.0), slow kd (1.5): aptamers visibly "hold" biomarker as ISF concentration
+    // falls during recovery — asymmetry matches real EAB kinetics. Local ISF depletion
+    // is negligible (<1%): diffusive flux >> binding flux by ~100×.
+    const target=conc>0.04?1:0;
+    const rate=target>a.curl?8.0:1.5;
     a.curl+=(target-a.curl)*Math.min(1,rate*fdt);
     let ang=a.baseDir,x=a.ax,y=a.ay;
     const pts=[[x,y]];
     for(let i=0;i<APT_N;i++){
       const tip=(i+1)/APT_N;
-      const bend=0.055; // gentle resting bow, echoes the original curve's shape
+      const bend=0.055;
       const waveAmp=reduce?0:(0.035+0.085*tip)*(1-a.curl);
       const wave=Math.sin(simTime*a.freq*2*Math.PI+a.phase+i*0.32)*waveAmp;
-      const curlTurn=a.curl*(0.34+0.28*tip);
+      const curlTurn=a.curl*(0.60+0.48*tip); // tight coil: ~270° total rotation when bound
       ang+=(bend+wave+curlTurn)*a.s;
       x+=Math.cos(ang)*APT_SEG; y+=Math.sin(ang)*APT_SEG;
       pts.push([x,y]);
     }
     a.pathEl.setAttribute('d',smoothPath(pts));
-    // pure-line aptamer: the only "now bound" cue is a subtle thickening/brightening, no end markers
-    a.pathEl.setAttribute('stroke-width',(0.5+0.35*a.curl).toFixed(2));
-    a.pathEl.setAttribute('opacity',(0.78+0.22*a.curl).toFixed(2));
+    a.pathEl.setAttribute('stroke-width',(0.40+0.90*a.curl).toFixed(2));
+    a.pathEl.setAttribute('opacity',(0.55+0.45*a.curl).toFixed(2));
+    const tipPt=pts[pts.length-1];
+    a.dotEl.setAttribute('cx',tipPt[0].toFixed(2));
+    a.dotEl.setAttribute('cy',tipPt[1].toFixed(2));
+    a.dotEl.setAttribute('opacity',(a.curl*0.95).toFixed(2));
   }
   let allApts=[];
   (function build(){
@@ -426,7 +430,7 @@
       [17,23,29,35,41,47,53,59,65,71].forEach((y,yi)=>{
         const altS=(yi%2===0)?n.s:-n.s;
         const ax=n.x+altS*hw(y);
-        ap+=`<g class="apt" data-m="${n.m}"><path fill="none" stroke="${n.c}" stroke-width=".5" stroke-linecap="round" opacity=".78"/></g>`;
+        ap+=`<g class="apt" data-m="${n.m}"><path fill="none" stroke="${n.c}" stroke-width=".5" stroke-linecap="round" opacity=".78"/><circle r=".7" fill="${n.c}" opacity="0"/></g>`;
         metas.push({ax,ay:y,s:altS,m:n.m});});
     });
     document.getElementById('needles').innerHTML=nd;document.getElementById('aptamers').innerHTML=ap;
@@ -437,7 +441,7 @@
       const a={ax:meta.ax,ay:meta.ay,s:meta.s,m:meta.m,baseDir:meta.s>0?0:Math.PI,
         phase:Math.random()*Math.PI*2,freq:0.30+Math.random()*0.22,curl:0,
         uvx:(meta.ax+meta.s*1.4)/100,uvy:1-meta.ay/125,
-        pathEl:g.querySelector('path')};
+        pathEl:g.querySelector('path'),dotEl:g.querySelector('circle')};
       updateApt(a,0,0);
       allApts.push(a);
     });
