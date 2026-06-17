@@ -54,8 +54,12 @@
   input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:3px;border-radius:3px;background:rgba(255,255,255,.16);outline:none}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--gfap);cursor:pointer;box-shadow:0 0 9px rgba(67,220,236,.55)}
   input[type=range]::-moz-range-thumb{width:15px;height:15px;border:none;border-radius:50%;background:var(--gfap);cursor:pointer}
-  #onsetR{height:4px;background:linear-gradient(90deg,#2a3350,#f6b13e 55%,#43dcec)}
-  #onsetR::-webkit-slider-thumb{background:#fff;width:18px;height:18px}
+  #onsetR{height:4px;background:linear-gradient(90deg,#2a3350,#f6b13e 55%,#43dcec);pointer-events:none;cursor:default}
+  #onsetR::-webkit-slider-thumb{width:10px;height:10px;background:#fff;opacity:.7}
+  .onset-speed{display:flex;align-items:center;gap:10px;margin-top:2px}
+  .onset-speed label{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--muted);white-space:nowrap;width:88px;flex:none}
+  .onset-speed output{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--ink);width:52px;text-align:right;flex:none}
+  .onset-speed input[type=range]{flex:1;height:3px}
   .toggles{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
   .hint{font-family:"JetBrains Mono",monospace;font-size:9.5px;color:var(--muted);text-align:center;line-height:1.6}
 </style>
@@ -90,7 +94,12 @@
   <div class="controls">
     <div class="onset">
       <div class="top"><span class="lbl">뇌졸중 진행도 <small>STROKE ONSET</small></span><span class="phase" id="phase">정상 (Baseline)</span></div>
-      <input id="onsetR" type="range" min="0" max="100" value="100">
+      <input id="onsetR" type="range" min="0" max="100" value="0" tabindex="-1">
+      <div class="onset-speed">
+        <label>진행 속도</label>
+        <input id="speedR" type="range" min="5" max="100" value="20">
+        <output id="o_speed"></output>
+      </div>
     </div>
     <div class="crow">
       <button id="play">⏸ 일시정지</button><button id="reset">↺ 리셋</button>
@@ -173,7 +182,7 @@
     vec2 c=texture(uField, src).rg;
     if(p.y<0.13){ float k=smoothstep(0.13,0.03,p.y); c+=k*uLeak*max(vec2(0.0),uBlood-c); }
     if(p.y>0.16){ c*=uClr; }
-    if(p.y>0.42&&p.y<0.875){ c.r*=(1.0-0.8*nearShaft(p.x,LX)*uDt*8.0); c.g*=(1.0-0.8*nearShaft(p.x,RX)*uDt*8.0); }
+    if(p.y>0.42&&p.y<0.875){ c.r*=(1.0-0.25*nearShaft(p.x,LX)*uDt*8.0); c.g*=(1.0-0.25*nearShaft(p.x,RX)*uDt*8.0); }
     if(p.y>0.86){ c*=0.6; }
     outColor=vec4(clamp(c,0.0,1.4),0.0,1.0);
   }`;
@@ -191,7 +200,6 @@
     float DU=0.5*(Dc+Dmap(p+vec2(0.0,uTexel.y),uD,uHole)), DD=0.5*(Dc+Dmap(p+vec2(0.0,-uTexel.y),uD,uHole));
     c += DL*(cl-c)+DR*(cr-c)+DU*(cu-c)+DD*(cd-c);
     if(p.y<0.13){ float k=smoothstep(0.13,0.03,p.y); c+=k*uLeak*max(vec2(0.0),uBlood-c); }
-    if(p.y>0.42&&p.y<0.875){ c.r*=(1.0-0.4*nearShaft(p.x,LX)); c.g*=(1.0-0.4*nearShaft(p.x,RX)); }
     if(p.y>0.86){ c*=0.85; }
     outColor=vec4(clamp(c,0.0,1.4),0.0,1.0); }`;
 
@@ -275,7 +283,7 @@
 
   // RGBA8/UNSIGNED_BYTE 1-px-per-aptamer FBO: lets every aptamer read its own local
   // concentration with one batched readPixels() instead of a global lag model
-  const SAMPLE_N=12;
+  const SAMPLE_N=40;
   const sampleTarget=(function(){const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,SAMPLE_N,1,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
@@ -329,7 +337,7 @@
 
   // params
   const P={flow:.5,leak:.30,D:.12,iter:90,clr:.999,curl:0,curlT:.12,hueG:190,hueU:35,bloom:.5,warp:.16,tone:1.35};
-  let running=true,onset=1.0,simTime=0,showG=1,showU=1,curlOn=0,holes=0,debug=0,dpr=Math.min(window.devicePixelRatio||1,2);
+  let running=true,onset=0,onsetHrPerSec=2,simTime=0,showG=1,showU=1,curlOn=0,holes=0,debug=0,dpr=Math.min(window.devicePixelRatio||1,2);
 
   function resize(){dpr=Math.min(window.devicePixelRatio||1,2);const r=canvas.getBoundingClientRect();
     canvas.width=Math.max(2,Math.round(r.width*dpr));canvas.height=Math.max(2,Math.round(r.height*dpr));}
@@ -352,9 +360,11 @@
   bind('tone','tone',v=>v.toFixed(2),v=>v/100);
 
   const playBtn=document.getElementById('play'),phaseEl=document.getElementById('phase'),onsetEl=document.getElementById('onsetR');
+  const speedEl=document.getElementById('speedR'),speedOut=document.getElementById('o_speed');
+  function updateSpeed(){onsetHrPerSec=parseFloat(speedEl.value)/10;speedOut.textContent=(onsetHrPerSec.toFixed(1))+'h/s';}
+  speedEl.addEventListener('input',updateSpeed);updateSpeed();
   playBtn.addEventListener('click',()=>{running=!running;playBtn.textContent=running?'⏸ 일시정지':'▶ 재생';});
-  document.getElementById('reset').addEventListener('click',()=>{clearF(A);clearF(B);simTime=0;for(let i=0;i<NP;i++)spawn(i);});
-  onsetEl.addEventListener('input',e=>onset=e.target.value/100);
+  document.getElementById('reset').addEventListener('click',()=>{clearF(A);clearF(B);simTime=0;onset=0;onsetEl.value=0;for(let i=0;i<NP;i++)spawn(i);});
   const tG=document.getElementById('tGfap'),tU=document.getElementById('tUch'),tH=document.getElementById('tHole'),dB=document.getElementById('dbg'),tColor=document.getElementById('tColor');
   tG.addEventListener('click',()=>{showG=showG?0:1;tG.classList.toggle('off',!showG);});
   tU.addEventListener('click',()=>{showU=showU?0:1;tU.classList.toggle('off',!showU);});
@@ -366,7 +376,7 @@
   // Aptamer = short jointed chain, root anchored at the electrode, tip free.
   // Unbound: idle traveling wave (cilia-like sway). Bound: chain eases into a tight
   // coil near the tip and locks, echoing real structure-switching aptamer folding.
-  const APT_LEN=4.05, APT_N=6, APT_SEG=APT_LEN/APT_N;
+  const APT_LEN=2.8, APT_N=5, APT_SEG=APT_LEN/APT_N;
   function smoothPath(pts){
     let d=`M${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`;
     for(let i=1;i<pts.length-1;i++){
@@ -381,7 +391,7 @@
     // Threshold sits inside the real concentration's natural fluctuation band at this
     // depth, so aptamers flicker fold/unfold as local concentration drifts above/below it —
     // closer matches the real reversible structure-switching equilibrium than a one-shot trigger.
-    const target=conc>0.004?1:0;
+    const target=conc>0.04?1:0;
     const rate=target>a.curl?6.0:2.2;
     a.curl+=(target-a.curl)*Math.min(1,rate*fdt);
     let ang=a.baseDir,x=a.ax,y=a.ay;
@@ -408,9 +418,11 @@
     NX.forEach(n=>{
       nd+=`<path d="M${n.x-1.5} 3 L${n.x+1.5} 3 L${n.x+0.25} 72 L${n.x-0.25} 72 Z" fill="url(#gold)"/>`;
       nd+=`<line x1="${n.x-0.4}" y1="4" x2="${n.x-0.1}" y2="70" stroke="#fff3cf" stroke-opacity=".4" stroke-width=".3"/>`;
-      [60,66,71].forEach((y)=>{const ax=n.x+n.s*1.3;
+      [7,15,23,31,39,47,55,62,67,71].forEach((y,yi)=>{
+        const altS=(yi%2===0)?n.s:-n.s;
+        const ax=n.x+altS*3.0;
         ap+=`<g class="apt" data-m="${n.m}"><path fill="none" stroke="${n.c}" stroke-width=".5" stroke-linecap="round" opacity=".78"/></g>`;
-        metas.push({ax,ay:y,s:n.s,m:n.m});});
+        metas.push({ax,ay:y,s:altS,m:n.m});});
     });
     document.getElementById('needles').innerHTML=nd;document.getElementById('aptamers').innerHTML=ap;
     document.querySelectorAll('#aptamers > .apt').forEach((g,i)=>{
@@ -425,11 +437,12 @@
     let rb='';for(let k=0;k<7;k++){const x=8+k*13,y=114+(k%2)*5;rb+=`<ellipse cx="${x}" cy="${y}" rx="3" ry="2" transform="rotate(${k*25} ${x} ${y})"/>`;}
     document.getElementById('rbc').innerHTML=rb;
   })();
-  function phaseText(bu,bg){
-    if(bu<0.05&&bg<0.05) return '정상 (Baseline)';
-    if(bu>bg*1.3) return 'UCH-L1 상승 — 뉴런 손상';
-    if(bg>bu*1.3) return 'GFAP 상승 — 별아교세포 반응';
-    return '급성기 — 두 마커 동반 상승';
+  function phaseText(bu,bg,tHr){
+    const h=tHr.toFixed(1)+'h';
+    if(bu<0.05&&bg<0.05) return `정상 (Baseline) · ${h}`;
+    if(bu>bg*1.3) return `UCH-L1 상승 — 뉴런 손상 · ${h}`;
+    if(bg>bu*1.3) return `GFAP 상승 — 별아교세포 반응 · ${h}`;
+    return `급성기 — 두 마커 동반 상승 · ${h}`;
   }
 
   // Real GFAP/UCH-L1 release kinetics overlap rather than alternate: UCH-L1 spikes
@@ -449,6 +462,8 @@
     const bG=biomarkerPulse(tHr,24,10,48)*0.92;
     const pal=getPalette(colorMode);
     if(running){
+      if(onset<1) onset=Math.min(1,onset+onsetHrPerSec*fdt/72);
+      onsetEl.value=onset*100;
       simTime+=fdt*(reduce?0.5:1.2);
       const curlAmt=P.curl;
       simPass(advP,U.ad.f,()=>{gl.uniform1f(U.ad.t,simTime);gl.uniform1f(U.ad.dt,0.10);gl.uniform1f(U.ad.v,P.flow);
@@ -468,7 +483,7 @@
         const conc=(a.m==='g'?sampleBuf[i*4]:sampleBuf[i*4+1])/255*SAMPLE_RANGE;
         updateApt(a,fdt,conc);
       });
-      phaseEl.textContent=phaseText(bU,bG);
+      phaseEl.textContent=phaseText(bU,bG,tHr);
     }
     gl.useProgram(copyP);bindQuad(copyP);gl.bindFramebuffer(gl.FRAMEBUFFER,bA.fbo);gl.viewport(0,0,BW,BH);
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,A.tex);gl.uniform1i(U.cp.f,0);gl.disable(gl.BLEND);gl.drawArrays(gl.TRIANGLES,0,6);
